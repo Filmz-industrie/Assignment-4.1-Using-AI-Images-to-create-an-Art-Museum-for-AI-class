@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3D Virtual Museum Walkthrough</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body, html {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: #050505;
+      user-select: none;
+    }
+
+    #webgl-container {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    /* Discreet HUD overlay */
+    #instructions-overlay {
+      position: absolute;
+      bottom: 25px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(15, 15, 20, 0.85);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: #e0e0e0;
+      padding: 12px 24px;
+      border-radius: 30px;
+      font-size: 13px;
+      letter-spacing: 0.5px;
+      pointer-events: none;
+      display: flex;
+      gap: 20px;
+      align-items: center;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+      z-index: 10;
+    }
+
+    .control-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .key-badge {
+      background: rgba(255, 255, 255, 0.15);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      padding: 3px 8px;
+      border-radius: 5px;
+      font-weight: 600;
+      font-size: 11px;
+    }
+
+    #crosshair {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 6px;
+      height: 6px;
+      background: rgba(255, 255, 255, 0.6);
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+      z-index: 5;
+    }
+
+    #click-to-start {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.8);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      color: #fff;
+      z-index: 20;
+      cursor: pointer;
+      transition: opacity 0.3s ease;
+    }
+
+    #click-to-start h1 {
+      font-size: 2.5rem;
+      font-weight: 300;
+      margin-bottom: 10px;
+      letter-spacing: 3px;
+    }
+
+    #click-to-start p {
+      color: #aaa;
+      font-size: 1rem;
+    }
+  </style>
+
+  <!-- Three.js Library via CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+  <div id="click-to-start">
+    <h1>OPEN GALLERY</h1>
+    <p>Click anywhere to enter the museum</p>
+  </div>
+
+  <div id="crosshair"></div>
+
+  <!-- Discreet Controls Instructions -->
+  <div id="instructions-overlay">
+    <div class="control-item">
+      <span class="key-badge">Hold Left Click</span> Walk Forward
+    </div>
+    <div class="control-item">
+      <span class="key-badge">Mouse</span> Look Around
+    </div>
+    <div class="control-item">
+      <span class="key-badge">▲ ▼</span> Move
+    </div>
+    <div class="control-item">
+      <span class="key-badge">◄ ►</span> Turn
+    </div>
+  </div>
+
+  <div id="webgl-container"></div>
+
+  <script>
+    // =========================================================================
+    // CUSTOM IMAGE URL CONFIGURATION
+    // Insert your image URLs or file paths here for the 7 frames.
+    // =========================================================================
+    const PAINTING_IMAGES = [
+      "https://raw.githubusercontent.com/Filmz-industrie/Assignment-4.1-Using-AI-Images-to-create-an-Art-Museum-for-AI-class/refs/heads/main/images/vivago_first_phone_1973.jpg", // Frame 1: North Room (Far End)
+      "https://raw.githubusercontent.com/Filmz-industrie/Assignment-4.1-Using-AI-Images-to-create-an-Art-Museum-for-AI-class/refs/heads/main/images/gemini_smart_phone_1992.png", // Frame 2: South Room (Far End)
+      "https://raw.githubusercontent.com/Filmz-industrie/Assignment-4.1-Using-AI-Images-to-create-an-Art-Museum-for-AI-class/refs/heads/main/images/Gemini_Generated_Image_wixm59wixm59wixm.png", // Frame 3: East Room (Far End)
+      "https://raw.githubusercontent.com/Filmz-industrie/Assignment-4.1-Using-AI-Images-to-create-an-Art-Museum-for-AI-class/refs/heads/main/images/NoteGPT_Image_20260728162059.png", // Frame 4: West Room (Far End)
+      "https://raw.githubusercontent.com/Filmz-industrie/Assignment-4.1-Using-AI-Images-to-create-an-Art-Museum-for-AI-class/refs/heads/main/images/ChatGPT%20Image%20Jul%2028%2C%202026%2C%2004_46_43%20PM.png", // Frame 5: North Room (Side Wall)
+      "https://raw.githubusercontent.com/Filmz-industrie/Assignment-4.1-Using-AI-Images-to-create-an-Art-Museum-for-AI-class/refs/heads/main/images/ChatGPT%20Image%20Jul%2028%2C%202026%2C%2004_53_27%20PM.png", // Frame 6: East Room (Side Wall)
+      "https://raw.githubusercontent.com/Filmz-industrie/Assignment-4.1-Using-AI-Images-to-create-an-Art-Museum-for-AI-class/refs/heads/main/images/vivago_img_wm_20260728_165906.jpg"  // Frame 7: West Room (Side Wall)
+    ];
+
+    // --- Global Variables ---
+    let scene, camera, renderer;
+    let isMouseDown = false;
+    let isPointerLocked = false;
+
+    const keys = {
+      ArrowUp: false, ArrowDown: false,
+      ArrowLeft: false, ArrowRight: false,
+      KeyW: false, KeyS: false, KeyA: false, KeyD: false
+    };
+
+    let yaw = 0;   
+    let pitch = 0; 
+    const moveSpeed = 0.15;
+    const turnSpeed = 0.035;
+
+    const startScreen = document.getElementById('click-to-start');
+    const container = document.getElementById('webgl-container');
+
+    init();
+    animate();
+
+    function init() {
+      // 1. Scene Setup
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x050508);
+      scene.fog = new THREE.FogExp2(0x050508, 0.012);
+
+      // 2. Camera Setup
+      camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+      camera.position.set(0, 1.7, 0); 
+
+      // 3. Renderer Setup
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      container.appendChild(renderer.domElement);
+
+      // 4. Lighting
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+      scene.add(ambientLight);
+
+      // Add lights to all 5 sections of the "+" shape
+      const lightPositions = [
+        { x: 0, z: 0 },    // Center Lobby
+        { x: 0, z: -20 },  // North
+        { x: 0, z: 20 },   // South
+        { x: 20, z: 0 },   // East
+        { x: -20, z: 0 }   // West
+      ];
+      
+      lightPositions.forEach(pos => {
+        const pLight = new THREE.PointLight(0xffeedd, 0.8, 30);
+        pLight.position.set(pos.x, 6, pos.z);
+        pLight.castShadow = true;
+        scene.add(pLight);
+      });
+
+      // 5. Build Museum Geometry
+      buildMuseum();
+
+      // 6. Add 7 Painting Frames
+      placePaintings();
+
+      // 7. Event Listeners
+      setupControls();
+      window.addEventListener('resize', onWindowResize, false);
+    }
+
+    // --- Museum Architecture Construction (Open "+" Layout) ---
+    function buildMuseum() {
+      const wallMat = new THREE.MeshStandardMaterial({ color: 0xeeeeee, roughness: 0.9 });
+      const floorMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.2, metalness: 0.2 });
+      const ceilingMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.9 });
+
+      // Floor
+      const floor = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), floorMat);
+      floor.rotation.x = -Math.PI / 2;
+      floor.receiveShadow = true;
+      scene.add(floor);
+
+      // Ceiling
+      const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), ceilingMat);
+      ceiling.position.y = 7;
+      ceiling.rotation.x = Math.PI / 2;
+      scene.add(ceiling);
+
+      // Helper function
+      function createWall(x, z, width, depth) {
+        const wall = new THREE.Mesh(new THREE.BoxGeometry(width, 7, depth), wallMat);
+        wall.position.set(x, 3.5, z);
+        wall.castShadow = true;
+        wall.receiveShadow = true;
+        scene.add(wall);
+      }
+
+      const t = 0.5; // Wall thickness
+
+      // We are building a "+" shape. Center is 20x20. Arms extend out by 20.
+      
+      // North Arm Walls (Z goes from -10 to -30)
+      createWall(0, -30, 20, t);   // North Far End
+      createWall(-10, -20, t, 20); // North Left Wall
+      createWall(10, -20, t, 20);  // North Right Wall
+
+      // South Arm Walls (Z goes from 10 to 30)
+      createWall(0, 30, 20, t);    // South Far End
+      createWall(-10, 20, t, 20);  // South Left Wall
+      createWall(10, 20, t, 20);   // South Right Wall
+
+      // East Arm Walls (X goes from 10 to 30)
+      createWall(30, 0, t, 20);    // East Far End
+      createWall(20, -10, 20, t);  // East Top Wall
+      createWall(20, 10, 20, t);   // East Bottom Wall
+
+      // West Arm Walls (X goes from -10 to -30)
+      createWall(-30, 0, t, 20);   // West Far End
+      createWall(-20, -10, 20, t); // West Top Wall
+      createWall(-20, 10, 20, t);  // West Bottom Wall
+    }
+
+    // --- Place 7 Painting Frames ---
+    function placePaintings() {
+      // Configuration for the open '+' shape perimeter walls
+      const frames = [
+        { x: 0, z: -29.7, rotY: 0, w: 5, h: 3 },              // Frame 1: North End
+        { x: 0, z: 29.7, rotY: Math.PI, w: 5, h: 3 },         // Frame 2: South End
+        { x: 29.7, z: 0, rotY: -Math.PI / 2, w: 5, h: 3 },    // Frame 3: East End
+        { x: -29.7, z: 0, rotY: Math.PI / 2, w: 5, h: 3 },    // Frame 4: West End
+        { x: -9.7, z: -20, rotY: Math.PI / 2, w: 4, h: 2.5 }, // Frame 5: North Arm, Left Wall
+        { x: 20, z: -9.7, rotY: 0, w: 4, h: 2.5 },            // Frame 6: East Arm, Top Wall
+        { x: -20, z: 9.7, rotY: Math.PI, w: 4, h: 2.5 }       // Frame 7: West Arm, Bottom Wall
+      ];
+
+      const textureLoader = new THREE.TextureLoader();
+
+      frames.forEach((config, idx) => {
+        const group = new THREE.Group();
+
+        // 1. Frame Border
+        const borderMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.6 });
+        const borderMesh = new THREE.Mesh(new THREE.BoxGeometry(config.w + 0.4, config.h + 0.4, 0.1), borderMat);
+        group.add(borderMesh);
+
+        // 2. Canvas Surface
+        let canvasMat;
+        const imgUrl = PAINTING_IMAGES[idx];
+
+        if (imgUrl && imgUrl.trim() !== "") {
+          canvasMat = new THREE.MeshBasicMaterial({ map: textureLoader.load(imgUrl) });
+        } else {
+          canvasMat = new THREE.MeshStandardMaterial({
+            map: createPlaceholderTexture(`Artwork #${idx + 1}`),
+            roughness: 0.5
+          });
+        }
+
+        const canvasMesh = new THREE.Mesh(new THREE.PlaneGeometry(config.w, config.h), canvasMat);
+        canvasMesh.position.z = 0.06;
+        group.add(canvasMesh);
+
+        // Transform Group
+        group.position.set(config.x, 3, config.z); // Height set to 3m
+        group.rotation.y = config.rotY;
+        scene.add(group);
+
+        // Create a target object for the spotlight to point perfectly at the painting
+        const targetObj = new THREE.Object3D();
+        targetObj.position.set(config.x, 3, config.z);
+        scene.add(targetObj);
+
+        // Spotlight shining on the artwork
+        const spotLight = new THREE.SpotLight(0xfff5ea, 1.2, 10, Math.PI / 5, 0.4);
+        spotLight.position.set(
+          config.x + Math.sin(config.rotY) * 3,
+          5,
+          config.z + Math.cos(config.rotY) * 3
+        );
+        spotLight.target = targetObj;
+        scene.add(spotLight);
+      });
+    }
+
+    function createPlaceholderTexture(text) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 512; canvas.height = 384;
+      const ctx = canvas.getContext('2d');
+
+      const grad = ctx.createLinearGradient(0, 0, 512, 384);
+      grad.addColorStop(0, '#1c2833');
+      grad.addColorStop(1, '#000000');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, 512, 384);
+
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+      ctx.lineWidth = 4;
+      ctx.strokeRect(15, 15, 482, 354);
+
+      ctx.fillStyle = '#f0f0f0';
+      ctx.font = 'bold 36px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, 256, 170);
+
+      ctx.font = '16px sans-serif';
+      ctx.fillStyle = '#888';
+      ctx.fillText('Insert Image URL in JS Array', 256, 220);
+
+      return new THREE.CanvasTexture(canvas);
+    }
+
+    // --- Controls & Inputs ---
+    function setupControls() {
+      startScreen.addEventListener('click', () => {
+        container.requestPointerLock();
+      });
+
+      document.addEventListener('pointerlockchange', () => {
+        isPointerLocked = document.pointerLockElement === container;
+        startScreen.style.opacity = isPointerLocked ? '0' : '1';
+        setTimeout(() => {
+          startScreen.style.display = isPointerLocked ? 'none' : 'flex';
+        }, 300);
+      });
+
+      document.addEventListener('mousemove', (e) => {
+        if (!isPointerLocked) return;
+        yaw -= (e.movementX || 0) * 0.002;
+        pitch -= (e.movementY || 0) * 0.002;
+        pitch = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, pitch));
+      });
+
+      document.addEventListener('mousedown', (e) => { if (e.button === 0) isMouseDown = true; });
+      document.addEventListener('mouseup', (e) => { if (e.button === 0) isMouseDown = false; });
+
+      document.addEventListener('keydown', (e) => { if (keys.hasOwnProperty(e.code)) keys[e.code] = true; });
+      document.addEventListener('keyup', (e) => { if (keys.hasOwnProperty(e.code)) keys[e.code] = false; });
+    }
+
+    // --- Main Animation Loop with '+' Shape Collision ---
+    function animate() {
+      requestAnimationFrame(animate);
+
+      if (keys.ArrowLeft || keys.KeyA) yaw += turnSpeed;
+      if (keys.ArrowRight || keys.KeyD) yaw -= turnSpeed;
+
+      const euler = new THREE.Euler(0, 0, 0, 'YXZ');
+      euler.x = pitch; euler.y = yaw;
+      camera.quaternion.setFromEuler(euler);
+
+      const forward = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+
+      let nextX = camera.position.x;
+      let nextZ = camera.position.z;
+
+      // Calculate desired position based on input
+      if (isMouseDown || keys.ArrowUp || keys.KeyW) {
+        nextX += forward.x * moveSpeed;
+        nextZ += forward.z * moveSpeed;
+      }
+      if (keys.ArrowDown || keys.KeyS) {
+        nextX -= forward.x * moveSpeed;
+        nextZ -= forward.z * moveSpeed;
+      }
+
+      // -------------------------------------------------------------
+      // '+' Shape Collision Detection
+      // The arms are 20 wide (-10 to 10). Max distance is 30 (-30 to 30)
+      // -------------------------------------------------------------
+      const innerBounds = 9.0;  // Hallway width (with padding so you don't clip walls)
+      const outerBounds = 29.0; // Max depth of the rooms
+
+      // If we are deep in the North/South halls, restrict X
+      if (nextZ < -innerBounds || nextZ > innerBounds) {
+        nextX = Math.max(-innerBounds, Math.min(innerBounds, nextX));
+      }
+      // If we are deep in the East/West halls, restrict Z
+      if (nextX < -innerBounds || nextX > innerBounds) {
+        nextZ = Math.max(-innerBounds, Math.min(innerBounds, nextZ));
+      }
+
+      // Restrict absolute outer bounds
+      nextX = Math.max(-outerBounds, Math.min(outerBounds, nextX));
+      nextZ = Math.max(-outerBounds, Math.min(outerBounds, nextZ));
+
+      camera.position.x = nextX;
+      camera.position.z = nextZ;
+
+      renderer.render(scene, camera);
+    }
+
+    function onWindowResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+  </script>
+</body>
+</html>
